@@ -7,12 +7,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.nio.file.Files;
+import java.io.RandomAccessFile;
 import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
-import java.util.stream.Stream;
 
 @Component
 public class PlayerScoreConsumer {
@@ -20,6 +21,8 @@ public class PlayerScoreConsumer {
     @Autowired
     LeaderBoardService leaderBoardService;
 
+    private long lastKnownPosition = 0;
+    private static final String FILE_PATH = "D:\\leaderboard\\leaderboard\\src\\main\\resources\\playerScoreInfoEvent.txt";
 
     @PostConstruct
     public void init() {
@@ -29,16 +32,33 @@ public class PlayerScoreConsumer {
 
     @Scheduled(fixedRate = 1000)
     public void readScoresFromFile() {
-        LeaderBoardRecord leaderBoardRecord = new LeaderBoardRecord();
-        try (Stream<String> stream = Files.lines(Paths.get("D:\\leaderboard\\leaderboard\\src\\main\\resources\\playerScoreInfoEvent.txt"))) {
-            stream.forEach(line -> {
-                String[] parts = line.split(",");
-                leaderBoardRecord.setPlayerID(Integer.parseInt(parts[0]));
-                leaderBoardRecord.setScore(Long.parseLong(parts[1]));
-                leaderBoardRecord.setPlayerName(parts[2]);
-                leaderBoardRecord.setTs(Timestamp.valueOf(LocalDateTime.now()));
-                leaderBoardService.saveLeaderBoardRecord(leaderBoardRecord);
-            });
+        try (RandomAccessFile randomAccessFile = new RandomAccessFile(Paths.get(FILE_PATH).toFile(), "r")) {
+            randomAccessFile.seek(lastKnownPosition);
+
+            String line;
+            while ((line = randomAccessFile.readLine()) != null) {
+                line = line.trim(); // Trim any leading or trailing whitespace
+                if (!line.isEmpty()) {
+                    String[] parts = line.split(",");
+                    if (parts.length >= 3 && !parts[0].isEmpty() && !parts[1].isEmpty() && !parts[2].isEmpty()) {
+                        try {
+                            LeaderBoardRecord leaderBoardRecord = new LeaderBoardRecord();
+                            leaderBoardRecord.setPlayerID(Integer.parseInt(parts[0]));
+                            leaderBoardRecord.setScore(Long.parseLong(parts[1]));
+                            leaderBoardRecord.setPlayerName(parts[2]);
+                            leaderBoardRecord.setTs(Timestamp.valueOf(LocalDateTime.now()));
+                            leaderBoardService.saveLeaderBoardRecord(leaderBoardRecord);
+                        } catch (NumberFormatException e) {
+                            System.err.println("Error parsing line: " + line + ". Skipping this line.");
+                        }
+                    } else {
+                        System.err.println("Invalid line format: " + line + ". Skipping this line.");
+                    }
+                    lastKnownPosition = randomAccessFile.getFilePointer(); // Update last known position after processing the line
+                }
+            }
+        } catch (FileNotFoundException e) {
+            System.err.println("File not found: " + FILE_PATH);
         } catch (IOException e) {
             e.printStackTrace();
         }
